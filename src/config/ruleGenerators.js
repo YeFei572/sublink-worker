@@ -3,8 +3,31 @@
  * Functions for generating rules and rule sets
  */
 
-import { UNIFIED_RULES, PREDEFINED_RULE_SETS, SITE_RULE_SETS, IP_RULE_SETS, CLASH_SITE_RULE_SETS, CLASH_IP_RULE_SETS } from './rules.js';
+import { UNIFIED_RULES, PREDEFINED_RULE_SETS } from './rules.js';
 import { SITE_RULE_SET_BASE_URL, IP_RULE_SET_BASE_URL, CLASH_SITE_RULE_SET_BASE_URL, CLASH_IP_RULE_SET_BASE_URL } from './ruleUrls.js';
+
+function toStringArray(value) {
+	if (Array.isArray(value)) {
+		return value
+			.filter(x => typeof x === 'string').map(x => x.trim())
+			.filter(Boolean);
+	}
+	if (typeof value === 'string') {
+		return value.split(',').map(x => x.trim()).filter(Boolean);
+	}
+	return [];
+}
+
+// Rule identifiers are interpolated into rule-set download URLs (e.g. `${BASE}${site}.srs`).
+// To prevent SSRF / URL-injection (CWE-918) via user-supplied customRules, restrict
+// site/ip identifiers to a conservative charset matching upstream rule-set filenames:
+// letters, digits, hyphen, underscore, dot. We also reject `..` sequences and any
+// leading dot to prevent path traversal within the base URL path.
+const SAFE_RULE_ID_RE = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/;
+
+function sanitizeRuleIds(values) {
+	return toStringArray(values).filter(v => SAFE_RULE_ID_RE.test(v) && !v.includes('..'));
+}
 
 // Helper function to get outbounds based on selected rule names
 export function getOutbounds(selectedRuleNames) {
@@ -43,12 +66,13 @@ export function generateRules(selectedRules = [], customRules = []) {
 	customRules.reverse();
 	customRules.forEach((rule) => {
 		rules.unshift({
-			site_rules: rule.site ? rule.site.split(',') : [],
-			ip_rules: rule.ip ? rule.ip.split(',') : [],
-			domain_suffix: rule.domain_suffix ? rule.domain_suffix.split(',') : [],
-			domain_keyword: rule.domain_keyword ? rule.domain_keyword.split(',') : [],
-			ip_cidr: rule.ip_cidr ? rule.ip_cidr.split(',') : [],
-			protocol: rule.protocol ? rule.protocol.split(',') : [],
+			site_rules: sanitizeRuleIds(rule.site),
+			ip_rules: sanitizeRuleIds(rule.ip),
+			domain_suffix: toStringArray(rule.domain_suffix),
+			domain_keyword: toStringArray(rule.domain_keyword),
+			ip_cidr: toStringArray(rule.ip_cidr),
+			src_ip_cidr: toStringArray(rule.src_ip_cidr),
+			protocol: toStringArray(rule.protocol),
 			outbound: rule.name
 		});
 	});
@@ -70,8 +94,6 @@ export function generateRuleSets(selectedRules = [], customRules = []) {
 	const siteRuleSets = new Set();
 	const ipRuleSets = new Set();
 
-	const ruleSets = [];
-
 	UNIFIED_RULES.forEach(rule => {
 		if (selectedRulesSet.has(rule.name)) {
 			rule.site_rules.forEach(siteRule => siteRuleSets.add(siteRule));
@@ -79,55 +101,29 @@ export function generateRuleSets(selectedRules = [], customRules = []) {
 		}
 	});
 
+	// DNS rules require these sets even when their routing rules are not selected.
+	['geolocation-cn', 'cn', 'geolocation-!cn'].forEach(rule => siteRuleSets.add(rule));
+
+	if (customRules) {
+		customRules.forEach(rule => {
+			sanitizeRuleIds(rule.site).forEach(site => siteRuleSets.add(site));
+			sanitizeRuleIds(rule.ip).forEach(ip => ipRuleSets.add(ip));
+		});
+	}
+
 	const site_rule_sets = Array.from(siteRuleSets).map(rule => ({
 		tag: rule,
 		type: 'remote',
 		format: 'binary',
-		url: `${SITE_RULE_SET_BASE_URL}${SITE_RULE_SETS[rule]}`,
+		url: `${SITE_RULE_SET_BASE_URL}${rule}.srs`,
 	}));
 
 	const ip_rule_sets = Array.from(ipRuleSets).map(rule => ({
 		tag: `${rule}-ip`,
 		type: 'remote',
 		format: 'binary',
-		url: `${IP_RULE_SET_BASE_URL}${IP_RULE_SETS[rule]}`,
+		url: `${IP_RULE_SET_BASE_URL}${rule}.srs`,
 	}));
-
-	if (!selectedRules.includes('Non-China')) {
-		site_rule_sets.push({
-			tag: 'geolocation-!cn',
-			type: 'remote',
-			format: 'binary',
-			url: `${SITE_RULE_SET_BASE_URL}geosite-geolocation-!cn.srs`,
-		});
-	}
-
-	if (customRules) {
-		customRules.forEach(rule => {
-			if (rule.site && rule.site != '') {
-				rule.site.split(',').forEach(site => {
-					site_rule_sets.push({
-						tag: site.trim(),
-						type: 'remote',
-						format: 'binary',
-						url: `${SITE_RULE_SET_BASE_URL}geosite-${site.trim()}.srs`,
-					});
-				});
-			}
-			if (rule.ip && rule.ip != '') {
-				rule.ip.split(',').forEach(ip => {
-					ip_rule_sets.push({
-						tag: `${ip.trim()}-ip`,
-						type: 'remote',
-						format: 'binary',
-						url: `${IP_RULE_SET_BASE_URL}geoip-${ip.trim()}.srs`,
-					});
-				});
-			}
-		});
-	}
-
-	ruleSets.push(...site_rule_sets, ...ip_rule_sets);
 
 	return { site_rule_sets, ip_rule_sets };
 }
@@ -173,12 +169,12 @@ export function generateClashRuleSets(selectedRules = [], customRules = [], useM
 	});
 
 	Array.from(ipRuleSets).forEach(rule => {
-		ip_rule_providers[rule] = {
+		ip_rule_providers[`${rule}-ip`] = {
 			type: 'http',
 			format: format,
 			behavior: 'ipcidr',
 			url: `${CLASH_IP_RULE_SET_BASE_URL}${rule}${ext}`,
-			path: `./ruleset/${rule}${ext}`,
+			path: `./ruleset/${rule}-ip${ext}`,
 			interval: 86400
 		};
 	});
@@ -198,32 +194,26 @@ export function generateClashRuleSets(selectedRules = [], customRules = [], useM
 	// Add custom rules
 	if (customRules) {
 		customRules.forEach(rule => {
-			if (rule.site && rule.site != '') {
-				rule.site.split(',').forEach(site => {
-					const site_trimmed = site.trim();
-					site_rule_providers[site_trimmed] = {
-						type: 'http',
-						format: format,
-						behavior: 'domain',
-						url: `${CLASH_SITE_RULE_SET_BASE_URL}${site_trimmed}${ext}`,
-						path: `./ruleset/${site_trimmed}${ext}`,
-						interval: 86400
-					};
-				});
-			}
-			if (rule.ip && rule.ip != '') {
-				rule.ip.split(',').forEach(ip => {
-					const ip_trimmed = ip.trim();
-					ip_rule_providers[ip_trimmed] = {
-						type: 'http',
-						format: format,
-						behavior: 'ipcidr',
-						url: `${CLASH_IP_RULE_SET_BASE_URL}${ip_trimmed}${ext}`,
-						path: `./ruleset/${ip_trimmed}${ext}`,
-						interval: 86400
-					};
-				});
-			}
+			sanitizeRuleIds(rule.site).forEach(site => {
+				site_rule_providers[site] = {
+					type: 'http',
+					format: format,
+					behavior: 'domain',
+					url: `${CLASH_SITE_RULE_SET_BASE_URL}${site}${ext}`,
+					path: `./ruleset/${site}${ext}`,
+					interval: 86400
+				};
+			});
+			sanitizeRuleIds(rule.ip).forEach(ip => {
+				ip_rule_providers[`${ip}-ip`] = {
+					type: 'http',
+					format: format,
+					behavior: 'ipcidr',
+					url: `${CLASH_IP_RULE_SET_BASE_URL}${ip}${ext}`,
+					path: `./ruleset/${ip}-ip${ext}`,
+					interval: 86400
+				};
+			});
 		});
 	}
 

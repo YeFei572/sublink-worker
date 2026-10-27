@@ -19,6 +19,8 @@ export function parseHysteria2(url) {
         password = params.auth;
     }
 
+    // Hysteria2 requires TLS by protocol design
+    if (!params.security) params.security = 'tls';
     const tls = createTlsConfig(params);
     const obfs = {};
     if (params['obfs-password']) {
@@ -26,7 +28,7 @@ export function parseHysteria2(url) {
         obfs.password = params['obfs-password'];
     }
 
-    const hopInterval = parseMaybeNumber(params['hop-interval']);
+    const hopInterval = parseMaybeNumber(params['hop-interval'] ?? params['hop_interval']);
 
     return {
         tag: name,
@@ -40,7 +42,7 @@ export function parseHysteria2(url) {
         recv_window_conn: params.recv_window_conn,
         up: params.up ?? (params.upmbps ? parseMaybeNumber(params.upmbps) : undefined),
         down: params.down ?? (params.downmbps ? parseMaybeNumber(params.downmbps) : undefined),
-        ports: params.ports,
+        ports: params.mport || params.ports,
         hop_interval: hopInterval,
         alpn: parseArray(params.alpn),
         fast_open: parseBool(params['fast-open'])

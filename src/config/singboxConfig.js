@@ -32,6 +32,26 @@ export const SING_BOX_CONFIG = {
 			}
 		],
 		rules: [
+			// Direct mode must not depend on a proxy node for DNS resolution.
+			{
+				clash_mode: "direct",
+				query_type: [
+					"A",
+					"AAAA",
+					"CNAME"
+				],
+				server: "dns_direct"
+			},
+			{
+				rule_set: ["geolocation-cn", "cn"],
+				query_type: [
+					"A",
+					"AAAA",
+					"CNAME"
+				],
+				server: "dns_direct"
+			},
+			// Unclassified domains need real IPs so private/custom CIDR routing can match.
 			{
 				rule_set: "geolocation-!cn",
 				query_type: [
@@ -41,8 +61,7 @@ export const SING_BOX_CONFIG = {
 				server: "dns_fakeip"
 			},
 			{
-				rule_set: "geolocation-!cn",
-				query_type: "CNAME",
+				query_type: ["A", "AAAA", "CNAME"],
 				server: "dns_proxy"
 			},
 			{
@@ -56,8 +75,7 @@ export const SING_BOX_CONFIG = {
 				rcode: "REFUSED"
 			}
 		],
-		final: "dns_direct",
-		independent_cache: true
+		final: "dns_direct"
 	},
 	ntp: {
 		enabled: true,
@@ -67,10 +85,9 @@ export const SING_BOX_CONFIG = {
 	},
 	inbounds: [
 		{ type: 'mixed', tag: 'mixed-in', listen: '0.0.0.0', listen_port: 2080 },
-		{ type: 'tun', tag: 'tun-in', address: '172.19.0.1/30', auto_route: true, strict_route: true, stack: 'mixed', sniff: true }
+		{ type: 'tun', tag: 'tun-in', address: '172.19.0.1/30', auto_route: true, strict_route: true, stack: 'mixed' }
 	],
 	outbounds: [
-		{ type: 'block', tag: 'REJECT' },
 		{ type: "direct", tag: 'DIRECT' }
 	],
 	route: {
@@ -118,6 +135,31 @@ export const SING_BOX_CONFIG_V1_11 = {
 			}
 		],
 		rules: [
+			// Node bootstrap must not recurse through the proxy DNS that depends on it.
+			{
+				outbound: "any",
+				server: "dns_resolver"
+			},
+			// Direct mode must not depend on a proxy node for DNS resolution.
+			{
+				clash_mode: "direct",
+				query_type: [
+					"A",
+					"AAAA",
+					"CNAME"
+				],
+				server: "dns_direct"
+			},
+			{
+				rule_set: ["geolocation-cn", "cn"],
+				query_type: [
+					"A",
+					"AAAA",
+					"CNAME"
+				],
+				server: "dns_direct"
+			},
+			// Unclassified domains need real IPs so private/custom CIDR routing can match.
 			{
 				rule_set: "geolocation-!cn",
 				query_type: [
@@ -127,8 +169,7 @@ export const SING_BOX_CONFIG_V1_11 = {
 				server: "dns_fakeip"
 			},
 			{
-				rule_set: "geolocation-!cn",
-				query_type: "CNAME",
+				query_type: ["A", "AAAA", "CNAME"],
 				server: "dns_proxy"
 			},
 			{
@@ -159,10 +200,9 @@ export const SING_BOX_CONFIG_V1_11 = {
 	},
 	inbounds: [
 		{ type: 'mixed', tag: 'mixed-in', listen: '0.0.0.0', listen_port: 2080 },
-		{ type: 'tun', tag: 'tun-in', address: '172.19.0.1/30', auto_route: true, strict_route: true, stack: 'mixed', sniff: true }
+		{ type: 'tun', tag: 'tun-in', address: '172.19.0.1/30', auto_route: true, strict_route: true, stack: 'mixed' }
 	],
 	outbounds: [
-		{ type: 'block', tag: 'REJECT' },
 		{ type: "direct", tag: 'DIRECT' }
 	],
 	route: {

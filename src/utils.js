@@ -1,4 +1,6 @@
 const PATH_LENGTH = 7;
+const FNV_32_OFFSET_BASIS = 0x811c9dc5;
+const FNV_32_PRIME = 0x01000193;
 
 // 自定义的字符串前缀检查函数
 export function checkStartsWith(str, prefix) {
@@ -209,6 +211,22 @@ export function groupProxiesByCountry(proxies, { getName } = {}) {
 
 	return grouped;
 }
+
+export function createStableProviderName(url) {
+	if (typeof url !== 'string' || url.trim() === '') {
+		throw new Error('Provider URL must be a non-empty string');
+	}
+
+	const normalizedUrl = url.trim();
+	let hash = FNV_32_OFFSET_BASIS;
+	for (let i = 0; i < normalizedUrl.length; i++) {
+		hash ^= normalizedUrl.charCodeAt(i);
+		hash = Math.imul(hash, FNV_32_PRIME);
+	}
+
+	return `_auto_provider_${(hash >>> 0).toString(36)}`;
+}
+
 export function deepCopy(obj) {
 	if (obj === null || typeof obj !== 'object') {
 		return obj;
@@ -270,7 +288,7 @@ export function parseUrlParams(url) {
 
 export function createTlsConfig(params) {
 	let tls = { enabled: false };
-	if (params.security != 'none') {
+	if (params.security && params.security !== 'none') {
 		tls = {
 			enabled: true,
 			server_name: params.sni || params.host,
@@ -363,8 +381,23 @@ export const COUNTRY_DATA = {
 };
 
 export function parseCountryFromNodeName(nodeName) {
-	const allAliases = Object.values(COUNTRY_DATA).flatMap(c => c.aliases);
-	const regex = new RegExp(allAliases.map(p => p.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|'), 'i');
+	// Build patterns sorted by length descending so longer aliases match first
+	// (e.g. "Indonesia" before "India", "United States" before "US").
+	// Short aliases (<=3 chars, all ASCII, e.g. US, UK, HK) get \b word boundaries
+	// to prevent false positives like "plus" matching "US".
+	const allEntries = Object.values(COUNTRY_DATA).flatMap(c =>
+		c.aliases.map(alias => ({ alias, escaped: alias.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&') }))
+	);
+	allEntries.sort((a, b) => b.alias.length - a.alias.length);
+
+	const patterns = allEntries.map(({ alias, escaped }) => {
+		if (alias.length <= 3 && /^[A-Za-z]+$/.test(alias)) {
+			return `\\b${escaped}\\b`;
+		}
+		return escaped;
+	});
+
+	const regex = new RegExp(patterns.join('|'), 'i');
 	const match = nodeName.match(regex);
 
 	if (match) {
@@ -377,4 +410,25 @@ export function parseCountryFromNodeName(nodeName) {
 	}
 
 	return null;
+}
+
+// Build a mihomo proxy-group `filter` regex matching node names of one country.
+// Mirrors the classification patterns in parseCountryFromNodeName (same escaping
+// and \b rules) so runtime filtering agrees with build-time grouping; the flag
+// emoji is added because mihomo filters raw names, which often carry it.
+export function buildCountryNameFilter({ emoji, aliases } = {}) {
+	const patterns = (aliases || []).map(alias => {
+		const escaped = alias.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+		if (alias.length <= 3 && /^[A-Za-z]+$/.test(alias)) {
+			return `\\b${escaped}\\b`;
+		}
+		return escaped;
+	});
+	if (emoji) {
+		patterns.push(emoji);
+	}
+	if (patterns.length === 0) {
+		return null;
+	}
+	return `(?i)${patterns.join('|')}`;
 }
